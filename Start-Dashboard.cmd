@@ -9,7 +9,7 @@ if not exist "node_modules\vite\bin\vite.js" (
   pause
   exit /b 1
 )
-echo Stock Auto Trader - virtual data only
+echo Stock Auto Trader - paper dashboard and historical backtests (no broker orders)
 if not exist "dist\index.html" (
   echo Run Build-Dashboard.cmd first.
   pause
