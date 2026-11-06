@@ -45,7 +45,7 @@ function signals(prices: number[], j: number, c: Config): { buy: boolean; sell: 
 }
 function buyQuantity(cash: number, rawPrice: number, c: Config) {
   const price = rawPrice * (1 + c.slippage / 100), unitCost = price * (1 + c.fee / 100)
-  let quantity = Math.floor(cash * c.allocation / 100 / unitCost)
+  let quantity = Math.floor(cash * (c.allocation / 100) / unitCost)
   if (!Number.isSafeInteger(quantity)) throw new Error('가격 단위와 초기 자금을 확인하세요. 주문 수량이 허용 정밀도를 초과합니다.')
   if (quantity * unitCost > cash && quantity > 0) quantity--
   return { price, quantity }
@@ -57,27 +57,29 @@ export function runBacktest(config: Config, dataset: Dataset): Result {
   const selected = bars.map((b, i) => b.date >= c.start && b.date <= c.end ? i : -1).filter(i => i >= 0)
   if (selected.length < 2) throw new Error('분석 기간에 최소 2개의 거래일이 필요합니다.')
   const warmup = lookback(c), first = selected[0]
-  if (first < warmup) throw new Error(`시작일 앞에 지표 준비용 가격 ${warmup}행이 필요합니다. 시작일을 늦추거나 더 오래된 CSV를 불러오세요.`)
+  if (c.strategy !== 'triple' && first < warmup) throw new Error(`시작일 앞에 지표 준비용 가격 ${warmup}행이 필요합니다. 시작일을 늦추거나 더 오래된 CSV를 불러오세요.`)
   let cash = c.capital, shares = 0, entryCost = 0, peak = c.capital, maxDrawdown = 0
   let fees = 0, taxes = 0, slippageCost = 0, closedTrades = 0, wins = 0, grossProfit = 0, grossLoss = 0
   const fills: Fill[] = [], daily: DailyPoint[] = []
+  const feeRate = c.fee / 100, taxRate = c.sellTax / 100
   const rawPriceAt = (i: number) => c.execution === 'next-open' ? bars[i].open! : bars[i].close
   const benchmarkBuy = buyQuantity(c.capital, rawPriceAt(first), c)
   const benchmarkCash = c.capital - benchmarkBuy.quantity * benchmarkBuy.price * (1 + c.fee / 100)
   for (const i of selected) {
-    const signal = signals(prices, i - 1, c), rawPrice = rawPriceAt(i)
+    const signal = c.strategy === 'triple' && (i - 1 < first || i - 1 < 26) ? { buy: false, sell: false } : signals(prices, i - 1, c)
+    const rawPrice = rawPriceAt(i)
     if (!shares && signal.buy) {
       const buy = buyQuantity(cash, rawPrice, c)
       if (buy.quantity > 0) {
         shares = buy.quantity
-        const notional = shares * buy.price, fee = notional * c.fee / 100, slippage = (buy.price - rawPrice) * shares
+        const notional = shares * buy.price, fee = notional * feeRate, slippage = (buy.price - rawPrice) * shares
         entryCost = notional + fee
         cash = Math.max(0, cash - entryCost); fees += fee; slippageCost += slippage
         fills.push({ date: bars[i].date, signalDate: bars[i - 1].date, side: 'buy', quantity: shares, rawPrice, price: buy.price, notional, fee, tax: 0, slippage, cashAfter: cash, sharesAfter: shares, realizedPnl: null })
       }
     } else if (shares && signal.sell) {
       const quantity = shares, price = rawPrice * (1 - c.slippage / 100), notional = quantity * price
-      const fee = notional * c.fee / 100, tax = notional * c.sellTax / 100, slippage = (rawPrice - price) * quantity
+      const fee = notional * feeRate, tax = notional * taxRate, slippage = (rawPrice - price) * quantity
       const proceeds = notional - fee - tax, realizedPnl = proceeds - entryCost
       cash += proceeds; shares = 0; closedTrades++; fees += fee; taxes += tax; slippageCost += slippage
       if (realizedPnl > 0) { wins++; grossProfit += realizedPnl } else grossLoss += -realizedPnl
@@ -103,15 +105,16 @@ export function runBacktest(config: Config, dataset: Dataset): Result {
     maxDrawdown, winRate: closedTrades ? wins / closedTrades * 100 : null, closedTrades,
     profitFactor: grossLoss > 0 ? grossProfit / grossLoss : null,
     fees, taxes, slippageCost, finalEquity, finalCash: cash, finalShares: shares, warmupRows: first,
-    warnings: [...dataset.warnings, '배당·분배금·이자·기업행사 현금흐름 및 호가 단위·거래량 제약은 반영하지 않습니다.', '마지막 보유분은 종가로 평가합니다. 강제 청산과 미실현 청산 비용은 반영하지 않습니다.'],
+    warnings: [...dataset.warnings, ...(c.strategy === 'triple' && first < 26 ? ['분석 초반의 교차 지표 준비 구간은 현금 보유일로 포함합니다. 분석 시작일 이전 신호는 체결하지 않습니다.'] : []), '배당·분배금·이자·기업행사 현금흐름 및 호가 단위·거래량 제약은 반영하지 않습니다.', '마지막 보유분은 종가로 평가합니다. 강제 청산과 미실현 청산 비용은 반영하지 않습니다.'],
   }
 }
 export function initialRange(data: Dataset, config: Config): Pick<Config, 'start' | 'end' | 'execution'> {
+  if (config.strategy === 'triple') return { start: data.bars[0].date, end: data.bars.at(-1)!.date, execution: config.execution === 'next-open' && data.bars.every(b => b.open !== undefined) ? 'next-open' : 'next-close' }
   const end = data.bars.at(-1)!.date, startDate = new Date(`${end}T00:00:00Z`)
   startDate.setUTCFullYear(startDate.getUTCFullYear() - 2)
   const suggested = data.bars.findIndex((b, i) => i >= lookback(config) && b.date >= startDate.toISOString().slice(0, 10))
   const first = suggested >= 0 ? suggested : Math.min(lookback(config), data.bars.length - 1)
-  return { start: data.bars[first].date, end, execution: data.bars.every(b => b.open !== undefined) ? 'next-open' : 'next-close' }
+  return { start: data.bars[first].date, end, execution: data.bars.every(b => b.open !== undefined) ? config.execution : 'next-close' }
 }
 export function chartRows(points: DailyPoint[], limit = 500): DailyPoint[] {
   if (points.length <= limit) return points

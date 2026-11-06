@@ -23,9 +23,9 @@ export interface Result {
   warmupRows: number; warnings: string[]
 }
 export const strategies: { id: StrategyId; name: string; description: string }[] = [
+  { id: 'triple', name: '삼중 모멘텀 · ROC 5/15/25', description: '세 기간 수익률 합이 기준선을 상향 돌파하면 매수, 하향 이탈하면 매도' },
   { id: 'sma', name: '이동평균 모멘텀', description: '전일 단기 평균 > 장기 평균이면 매수, 반대이면 매도' },
   { id: 'reversion', name: '평균 회귀', description: '전일 종가가 장기 평균보다 2.5% 낮으면 매수, 평균 회복 시 매도' },
   { id: 'breakout', name: '종가 돌파', description: '전일 종가가 앞선 장기 기간 최고 종가를 돌파하면 매수, 장기 평균 하회 시 매도' },
-  { id: 'triple', name: '삼중 모멘텀 · ROC 5/15/25', description: '세 기간 수익률 합이 기준선을 상향 돌파하면 매수, 하향 이탈하면 매도' },
 ]
-export const defaultConfig: Config = { strategy: 'sma', start: '', end: '', capital: 30000000, fee: 0.015, slippage: 0.05, sellTax: 0, allocation: 100, execution: 'next-open', fast: 5, slow: 20, threshold: 4 }
+export const defaultConfig: Config = { strategy: 'triple', start: '', end: '', capital: 10000000, fee: 0.015, slippage: 0.05, sellTax: 0, allocation: 100, execution: 'next-close', fast: 5, slow: 20, threshold: 4 }

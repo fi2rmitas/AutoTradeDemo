@@ -10,7 +10,7 @@ function dataset(closes: number[], opens = closes): Dataset {
   }
   return { name: '검증용 가격', symbol: 'DEMO', kind: 'synthetic', source: '수기 검산 fixture', adjustment: 'unadjusted', sha256: 'b'.repeat(64), warnings: [], bars }
 }
-function config(data: Dataset, start = 2): Config { return { ...defaultConfig, fast: 1, slow: 2, fee: 0, slippage: 0, capital: 100000, start: data.bars[start].date, end: data.bars.at(-1)!.date } }
+function config(data: Dataset, start = 2): Config { return { ...defaultConfig, strategy: 'sma', execution: 'next-open', fast: 1, slow: 2, fee: 0, slippage: 0, capital: 100000, start: data.bars[start].date, end: data.bars.at(-1)!.date } }
 describe('과거 가격 백테스트 회계와 체결', () => {
   it('전일 신호를 다음 거래일 시가에 체결하고 비용을 수기로 검산할 수 있다', () => {
     const data = dataset([100, 110, 90, 80, 80], [100, 110, 100, 120, 80])
@@ -127,7 +127,7 @@ describe('입력 조건과 표시용 데이터', () => {
     expect(() => runBacktest({ ...config(data), execution: 'next-close' }, data)).not.toThrow()
   })
   it('자료 범위로 기본 기간과 체결 방법을 정한다', () => {
-    const data = dataset(Array.from({ length: 60 }, (_, i) => 100 + i)), c = { ...defaultConfig, slow: 20 }
+    const data = dataset(Array.from({ length: 60 }, (_, i) => 100 + i)), c: Config = { ...defaultConfig, strategy: 'sma', slow: 20 }
     expect(initialRange(data, c).start).toBe(data.bars[20].date)
     data.bars.forEach(b => delete b.open)
     expect(initialRange(data, c).execution).toBe('next-close')
@@ -138,5 +138,25 @@ describe('입력 조건과 표시용 데이터', () => {
     expect(reduced.length).toBeLessThanOrEqual(50)
     expect(reduced[0]).toEqual(points[0]); expect(reduced.at(-1)).toEqual(points.at(-1))
     expect(reduced).toContain(points[456]); expect(reduced).toContain(points[789]); expect(points.length).toBe(1000)
+  })
+})
+
+describe('기존 코스닥150 삼중 모멘텀 기본 조건', () => {
+  it('원본 기본값은 삼중 모멘텀·1천만원·익일 종가·기준선 4이다', () => {
+    expect(defaultConfig).toMatchObject({ strategy: 'triple', capital: 10000000, execution: 'next-close', threshold: 4, fee: 0.015, slippage: 0.05, allocation: 100, sellTax: 0 })
+  })
+  it('초기 준비 기간을 현금으로 포함하고 전체 가격 구간을 선택한다', () => {
+    const values = Array(36).fill(100); values[28] = 120; values[29] = 120; values[30] = 105; values.fill(90, 31)
+    const data = dataset(values), range = initialRange(data, defaultConfig)
+    expect(range).toEqual({ start: data.bars[0].date, end: data.bars.at(-1)!.date, execution: 'next-close' })
+    const result = runBacktest({ ...defaultConfig, ...range }, data)
+    expect(result.daily).toHaveLength(36)
+    expect(result.daily.slice(0, 27).every(p => p.cash === defaultConfig.capital && p.shares === 0)).toBe(true)
+    expect(result.fills[0].date).toBe(data.bars[29].date)
+  })
+  it('분석 시작일 전날의 교차 신호를 첫날 체결하지 않는다', () => {
+    const values = Array(36).fill(100); values[28] = 120; values[29] = 120; values[30] = 105; values.fill(90, 31)
+    const data = dataset(values), c = { ...defaultConfig, start: data.bars[29].date, end: data.bars.at(-1)!.date }
+    expect(runBacktest(c, data).fills).toHaveLength(0)
   })
 })
