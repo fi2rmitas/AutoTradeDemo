@@ -6,3 +6,7 @@ dist/
 *.log
 .DS_Store
 test-results/
+
+# Local historical market data and reports stay on the user's PC.
+public/local-data/
+local-data/
